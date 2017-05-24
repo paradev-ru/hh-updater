@@ -14,7 +14,6 @@ type Config struct {
 	ClientSecret  string        `json:"client_secret" yaml:"client_secret"`
 	RedirectURL   string        `json:"redirect_url" yaml:"redirect_url"`
 	StateString   string        `json:"state_string" yaml:"state_string"`
-	RequestSleep  time.Duration `json:"request_sleep" yaml:"request_sleep"`
 	LoopSleep     time.Duration `json:"loop_sleep" yaml:"loop_sleep"`
 	ListenAddress string        `json:"listen_address" yaml:"listen_address"`
 	LogLevel      string        `json:"log_level" yaml:"log_level"`

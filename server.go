@@ -101,23 +101,29 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Daemon() {
 	for {
 		for _, user := range s.userList {
-			logrus.Debugf("Getting resume for %s...", user.Email)
+			logrus.Debugf("Getting resumes for user: %s", user.Email)
 			resumeList, err := user.GetResumeList()
 			if err != nil {
-				logrus.Errorf("Error getting resume list for %s: %v", user.Email, err)
+				logrus.Errorf("Error getting resume for user %s: %v", user.Email, err)
 				continue
 			}
-			time.Sleep(s.c.RequestSleep)
-			for _, resume := range resumeList {
-				logrus.Debugf("Publishing resume '%s'...", resume.Title)
-				_, err := user.PublishResume(resume)
+			for _, r := range resumeList {
+				logrus.Debugf("Requesting resume status: '%s'", r.Title)
+				status, err := user.GetResumeStatus(r)
 				if err != nil {
-					logrus.Errorf("Error publishing resume '%s': %v", resume.Title, err)
-					time.Sleep(s.c.RequestSleep)
+					logrus.Errorf("Error getting resume status '%s': %v", r.Title, err)
 					continue
 				}
-				logrus.Debugf("Resume '%s' updated", resume.Title)
-				time.Sleep(s.c.RequestSleep)
+				if !status.IsPublishAllowed() {
+					logrus.Debugf("Skipping publish resume: '%s' (%s)", r.Title, status.String())
+					continue
+				}
+				logrus.Debugf("Publishing resume: '%s'", r.Title)
+				if _, err := user.PublishResume(r); err != nil {
+					logrus.Errorf("Error publishing resume '%s': %v", r.Title, err)
+					continue
+				}
+				logrus.Infof("Resume updated: '%s'", r.Title)
 			}
 		}
 		time.Sleep(s.c.LoopSleep)

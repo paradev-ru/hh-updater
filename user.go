@@ -51,11 +51,41 @@ func (u *User) GetResumeList() ([]*Resume, error) {
 	if err != nil {
 		return resultList, err
 	}
+	if code := resp.StatusCode; code < 200 || code > 299 {
+		return resultList, fmt.Errorf("Incorrect status code (%s)", resp.Status)
+	}
 	var rl ResumeList
 	if err := json.Unmarshal(body, &rl); err != nil {
 		return resultList, err
 	}
 	return rl.Resumes, nil
+}
+
+// https://github.com/hhru/api/blob/master/docs/resumes.md#Информация-о-статусе-резюме-и-готовности-резюме-к-публикации
+func (u *User) GetResumeStatus(r *Resume) (*ResumeStatus, error) {
+	url := fmt.Sprintf("https://api.hh.ru/resumes/%s/status", r.ID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", u.Token.AccessToken))
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if code := resp.StatusCode; code < 200 || code > 299 {
+		return nil, fmt.Errorf("Incorrect status code (%s)", resp.Status)
+	}
+	var rs *ResumeStatus
+	if err := json.Unmarshal(body, &rs); err != nil {
+		return nil, err
+	}
+	return rs, nil
 }
 
 // https://github.com/hhru/api/blob/master/docs/resumes.md#Публикация-резюме
