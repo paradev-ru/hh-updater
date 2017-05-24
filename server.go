@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/boltdb/bolt"
 	"github.com/leominov/hh"
+	"github.com/leominov/hh-updater/hhclient"
 )
 
 var (
@@ -24,6 +24,12 @@ type Server struct {
 	userList  map[string]*User
 	oAuthConf *oauth2.Config
 	db        *bolt.DB
+}
+
+type User struct {
+	ID    string        `json:"id"`
+	Email string        `json:"email"`
+	Token *oauth2.Token `json:"token"`
 }
 
 func NewServer(config *Config) *Server {
@@ -46,44 +52,23 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) (*User, error) {
 	q := r.URL.Query()
-
 	if q.Get("state") != s.c.StateString {
 		return nil, errors.New("Invalid oAuth2 state")
 	}
-
 	token, err := s.oAuthConf.Exchange(oauth2.NoContext, q.Get("code"))
 	if err != nil {
 		return nil, err
 	}
-
-	// https://github.com/hhru/api/blob/master/docs/me.md#Получение-информации-о-текущем-пользователе
-	client := s.oAuthConf.Client(oauth2.NoContext, token)
-	resp, err := client.Get("https://api.hh.ru/me")
+	client := hhclient.NewClient(token)
+	me, err := client.Me.GetMe()
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var me Me
-	if err := json.Unmarshal(body, &me); err != nil {
-		return nil, err
-	}
-
-	if _, ok := s.userList[me.ID]; !ok {
-		logrus.Infof("Add user: %s", me.Email)
-	}
-
 	u := &User{
 		ID:    me.ID,
 		Email: me.Email,
 		Token: token,
 	}
-	u.SetClient(s.oAuthConf.Client(oauth2.NoContext, u.Token))
-
 	return u, nil
 }
 
@@ -98,18 +83,19 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/logged.html", http.StatusFound)
 }
 
-func (s *Server) Daemon() {
+func (s *Server) ResumePublishDaemon() {
 	for {
 		for _, user := range s.userList {
+			client := hhclient.NewClient(user.Token)
 			logrus.Debugf("Getting resumes for user: %s", user.Email)
-			resumeList, err := user.GetResumeList()
+			resumeList, err := client.Resume.ResumeMine()
 			if err != nil {
 				logrus.Errorf("Error getting resume for user %s: %v", user.Email, err)
 				continue
 			}
 			for _, r := range resumeList {
 				logrus.Debugf("Requesting resume status: '%s'", r.Title)
-				status, err := user.GetResumeStatus(r)
+				status, err := client.Resume.ResumesStatus(r)
 				if err != nil {
 					logrus.Errorf("Error getting resume status '%s': %v", r.Title, err)
 					continue
@@ -119,7 +105,7 @@ func (s *Server) Daemon() {
 					continue
 				}
 				logrus.Debugf("Publishing resume: '%s'", r.Title)
-				if _, err := user.PublishResume(r); err != nil {
+				if err := client.Resume.ResumesPublish(r); err != nil {
 					logrus.Errorf("Error publishing resume '%s': %v", r.Title, err)
 					continue
 				}
@@ -148,7 +134,7 @@ func (s *Server) Init() error {
 }
 
 func (s *Server) ResoreUserList() error {
-	err := s.db.View(func(tx *bolt.Tx) error {
+	return s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(UsersBucket)
 		v := b.Get(UsersKey)
 		if len(v) == 0 {
@@ -160,14 +146,6 @@ func (s *Server) ResoreUserList() error {
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	for id, u := range s.userList {
-		u.client = s.oAuthConf.Client(oauth2.NoContext, u.Token)
-		s.userList[id] = u
-	}
-	return nil
 }
 
 func (s *Server) SaveUserList() error {
@@ -195,7 +173,7 @@ func (s *Server) Start() error {
 
 	http.Handle("/", http.FileServer(http.Dir("./public")))
 
-	go s.Daemon()
+	go s.ResumePublishDaemon()
 
 	logrus.Infof("Started running on http://%s", s.c.ListenAddress)
 	return http.ListenAndServe(s.c.ListenAddress, nil)
