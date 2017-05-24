@@ -11,7 +11,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/boltdb/bolt"
 	"github.com/leominov/hh"
-	"github.com/leominov/hh-updater/hhclient"
+	"github.com/paradev-ru/hh-updater/hhclient"
 )
 
 var (
