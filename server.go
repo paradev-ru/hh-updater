@@ -56,6 +56,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) (*User, erro
 		return nil, err
 	}
 
+	// https://github.com/hhru/api/blob/master/docs/me.md#Получение-информации-о-текущем-пользователе
 	client := s.oAuthConf.Client(oauth2.NoContext, token)
 	resp, err := client.Get("https://api.hh.ru/me")
 	if err != nil {

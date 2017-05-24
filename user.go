@@ -39,6 +39,7 @@ func (u *User) CanRefresh() bool {
 	return time.Now().After(u.Token.Expiry)
 }
 
+// https://github.com/hhru/api/blob/master/docs/resumes.md#Список-резюме-авторизованного-пользователя
 func (u *User) GetResumeList() ([]*Resume, error) {
 	var resultList []*Resume
 	resp, err := u.client.Get("https://api.hh.ru/resumes/mine")
@@ -57,6 +58,7 @@ func (u *User) GetResumeList() ([]*Resume, error) {
 	return rl.Resumes, nil
 }
 
+// https://github.com/hhru/api/blob/master/docs/resumes.md#Публикация-резюме
 func (u *User) PublishResume(r *Resume) (string, error) {
 	var result string
 	url := fmt.Sprintf("https://api.hh.ru/resumes/%s/publish", r.ID)
