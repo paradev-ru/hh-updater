@@ -85,25 +85,3 @@ func (r *ResumeService) ResumesStatus(resume *Resume) (*ResumeStatus, error) {
 	}
 	return resumeStatus, nil
 }
-
-func (r *ResumeStatus) IsPublishAllowed() bool {
-	if r.Blocked == true {
-		return false
-	}
-	if r.Finished == false {
-		return false
-	}
-	if r.CanPublishOrUpdate == false {
-		return false
-	}
-	return true
-}
-
-func (r *ResumeStatus) String() string {
-	return fmt.Sprintf(
-		"Blocked:%v, Finished:%v, CanPublishOrUpdate:%v",
-		r.Blocked,
-		r.Finished,
-		r.CanPublishOrUpdate,
-	)
-}

@@ -100,8 +100,8 @@ func (s *Server) ResumePublishDaemon() {
 					logrus.Errorf("Error getting resume status '%s': %v", r.Title, err)
 					continue
 				}
-				if !status.IsPublishAllowed() {
-					logrus.Debugf("Skipping publish resume: '%s' (%s)", r.Title, status.String())
+				if !status.CanPublishOrUpdate {
+					logrus.Debugf("Skipping publish resume: '%s'", r.Title)
 					continue
 				}
 				logrus.Debugf("Publishing resume: '%s'", r.Title)
