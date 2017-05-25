@@ -86,7 +86,12 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ResumePublishDaemon() {
 	for {
 		for _, user := range s.userList {
+			logrus.Debugf("Getting information of user: %s", user.Email)
 			client := hhclient.NewClient(user.Token)
+			if _, err := client.Me.GetMe(); err != nil {
+				logrus.Errorf("Error getting information of user %s: %v", user.Email, err)
+				continue
+			}
 			logrus.Debugf("Getting resumes for user: %s", user.Email)
 			resumeList, err := client.Resume.ResumeMine()
 			if err != nil {
@@ -175,6 +180,6 @@ func (s *Server) Start() error {
 
 	go s.ResumePublishDaemon()
 
-	logrus.Infof("Started running on http://%s", s.c.ListenAddress)
+	logrus.Infof("Started running on %s", s.c.ListenAddress)
 	return http.ListenAndServe(s.c.ListenAddress, nil)
 }

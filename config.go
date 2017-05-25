@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"time"
 
@@ -36,6 +37,13 @@ func ConfigFromFile(file string) (*Config, error) {
 		}
 		logrus.SetLevel(level)
 	}
-	logrus.Debugf("%#v", c)
 	return c, nil
+}
+
+func (c *Config) String() string {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }

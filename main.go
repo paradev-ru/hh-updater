@@ -20,6 +20,8 @@ func init() {
 }
 
 func main() {
+	logrus.Info("Starting hh-updater...")
+
 	config, err := ConfigFromFile(*configFile)
 	if err != nil {
 		logrus.Fatal(err)
@@ -29,6 +31,8 @@ func main() {
 	if err := server.Init(); err != nil {
 		logrus.Fatal(err)
 	}
+
+	logrus.Debugf("Configuration: %s", config.String())
 
 	go func() {
 		errChan <- server.Start()
