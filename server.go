@@ -85,8 +85,20 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ResumePublishDaemon() {
 	for {
-		for _, user := range s.userList {
+		for i, user := range s.userList {
 			logrus.Debugf("Getting information of user: %s", user.Email)
+			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
+			newToken, err := tokenSource.Token()
+			if err != nil {
+				logrus.Errorf("Error getting token for user %s: %v", user.Email, err)
+				continue
+			}
+			if user.Token.AccessToken != newToken.AccessToken {
+				logrus.Infof("Updating token for user %s", user.Email)
+				user.Token = newToken
+				s.userList[i] = user
+				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
+			}
 			client := hhclient.NewClient(user.Token)
 			if _, err := client.Me.GetMe(); err != nil {
 				logrus.Errorf("Error getting information of user %s: %v", user.Email, err)
