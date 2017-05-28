@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -83,6 +84,35 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/logged.html", http.StatusFound)
 }
 
+func (s *Server) publishUserResumes(user *User) error {
+	client := hhclient.NewClient(user.Token)
+	if _, err := client.Me.GetMe(); err != nil {
+		return fmt.Errorf("Error getting information of user %s: %v", user.Email, err)
+	}
+	logrus.Debugf("Getting resumes for user: %s", user.Email)
+	resumeList, err := client.Resume.ResumeMine()
+	if err != nil {
+		return fmt.Errorf("Error getting resume for user %s: %v", user.Email, err)
+	}
+	for _, r := range resumeList {
+		logrus.Debugf("Requesting resume status: '%s'", r.Title)
+		status, err := client.Resume.ResumesStatus(r)
+		if err != nil {
+			return fmt.Errorf("Error getting resume status '%s': %v", r.Title, err)
+		}
+		if !status.CanPublishOrUpdate {
+			logrus.Debugf("Skipping publish resume: '%s'", r.Title)
+			continue
+		}
+		logrus.Debugf("Publishing resume: '%s'", r.Title)
+		if err := client.Resume.ResumesPublish(r); err != nil {
+			return fmt.Errorf("Error publishing resume '%s': %v", r.Title, err)
+		}
+		logrus.Infof("Resume updated: '%s'", r.Title)
+	}
+	return nil
+}
+
 func (s *Server) ResumePublishDaemon() {
 	for {
 		for i, user := range s.userList {
@@ -99,34 +129,8 @@ func (s *Server) ResumePublishDaemon() {
 				s.userList[i] = user
 				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
 			}
-			client := hhclient.NewClient(user.Token)
-			if _, err := client.Me.GetMe(); err != nil {
-				logrus.Errorf("Error getting information of user %s: %v", user.Email, err)
-				continue
-			}
-			logrus.Debugf("Getting resumes for user: %s", user.Email)
-			resumeList, err := client.Resume.ResumeMine()
-			if err != nil {
-				logrus.Errorf("Error getting resume for user %s: %v", user.Email, err)
-				continue
-			}
-			for _, r := range resumeList {
-				logrus.Debugf("Requesting resume status: '%s'", r.Title)
-				status, err := client.Resume.ResumesStatus(r)
-				if err != nil {
-					logrus.Errorf("Error getting resume status '%s': %v", r.Title, err)
-					continue
-				}
-				if !status.CanPublishOrUpdate {
-					logrus.Debugf("Skipping publish resume: '%s'", r.Title)
-					continue
-				}
-				logrus.Debugf("Publishing resume: '%s'", r.Title)
-				if err := client.Resume.ResumesPublish(r); err != nil {
-					logrus.Errorf("Error publishing resume '%s': %v", r.Title, err)
-					continue
-				}
-				logrus.Infof("Resume updated: '%s'", r.Title)
+			if err := s.publishUserResumes(user); err != nil {
+				logrus.Error(err)
 			}
 		}
 		time.Sleep(s.c.LoopSleep)
