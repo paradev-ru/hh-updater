@@ -115,7 +115,7 @@ func (s *Server) publishUserResumes(user *User) error {
 
 func (s *Server) ResumePublishDaemon() {
 	for {
-		for i, user := range s.userList {
+		for id, user := range s.userList {
 			logrus.Debugf("Getting information of user: %s", user.Email)
 			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
 			newToken, err := tokenSource.Token()
@@ -126,7 +126,7 @@ func (s *Server) ResumePublishDaemon() {
 			if user.Token.AccessToken != newToken.AccessToken {
 				logrus.Infof("Updating token for user %s", user.Email)
 				user.Token = newToken
-				s.userList[i] = user
+				s.userList[id] = user
 				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
 			}
 			if err := s.publishUserResumes(user); err != nil {
