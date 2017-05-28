@@ -24,10 +24,11 @@ var (
 )
 
 type Server struct {
-	c         *Config
-	userList  map[string]*User
-	oAuthConf *oauth2.Config
-	db        *bolt.DB
+	c               *Config
+	userList        map[string]*User
+	userListChanged bool
+	oAuthConf       *oauth2.Config
+	db              *bolt.DB
 }
 
 type User struct {
@@ -51,6 +52,23 @@ func NewServer(config *Config) *Server {
 			RedirectURL:  config.RedirectURL,
 		},
 	}
+}
+
+func (s *Server) Init() error {
+	db, err := bolt.Open(s.c.DatabasePath, 0600, nil)
+	if err != nil {
+		return err
+	}
+
+	s.db = db
+
+	return s.db.Update(func(tx *bolt.Tx) error {
+		// Always create Users bucket.
+		if _, err := tx.CreateBucketIfNotExists(UsersBucket); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (u *User) ToSafeUser() *SafeUser {
@@ -100,6 +118,7 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.userList[user.ID]; !ok {
+		s.userListChanged = true
 		s.userList[user.ID] = user
 		logrus.Infof("User %s added", user.Email)
 	} else {
@@ -148,47 +167,6 @@ func (s *Server) publishUserResumes(user *User) error {
 		logrus.Infof("Resume updated: '%s'", r.Title)
 	}
 	return nil
-}
-
-func (s *Server) ResumePublishDaemon() {
-	for {
-		for id, user := range s.userList {
-			logrus.Debugf("Getting information of user: %s", user.Email)
-			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
-			newToken, err := tokenSource.Token()
-			if err != nil {
-				logrus.Errorf("Error getting token for user %s: %v", user.Email, err)
-				continue
-			}
-			if user.Token.AccessToken != newToken.AccessToken {
-				logrus.Infof("Updating token for user %s", user.Email)
-				user.Token = newToken
-				s.userList[id] = user
-				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
-			}
-			if err := s.publishUserResumes(user); err != nil {
-				logrus.Error(err)
-			}
-		}
-		time.Sleep(s.c.LoopSleep)
-	}
-}
-
-func (s *Server) Init() error {
-	db, err := bolt.Open(s.c.DatabasePath, 0600, nil)
-	if err != nil {
-		return err
-	}
-
-	s.db = db
-
-	return s.db.Update(func(tx *bolt.Tx) error {
-		// Always create Users bucket.
-		if _, err := tx.CreateBucketIfNotExists(UsersBucket); err != nil {
-			return err
-		}
-		return nil
-	})
 }
 
 func (s *Server) ResoreUserList() error {
@@ -286,6 +264,46 @@ func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (s *Server) ResumePublishLoop() {
+	for {
+		for id, user := range s.userList {
+			logrus.Debugf("Getting information of user: %s", user.Email)
+			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
+			newToken, err := tokenSource.Token()
+			if err != nil {
+				logrus.Errorf("Error getting token for user %s: %v", user.Email, err)
+				continue
+			}
+			if user.Token.AccessToken != newToken.AccessToken {
+				logrus.Infof("Updating token for user %s", user.Email)
+				user.Token = newToken
+				s.userList[id] = user
+				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
+			}
+			if err := s.publishUserResumes(user); err != nil {
+				logrus.Error(err)
+			}
+		}
+		time.Sleep(s.c.UpdateInterval)
+	}
+}
+
+func (s *Server) DumpLoop() {
+	for {
+		if s.userListChanged {
+			logrus.Debug("Saving to disk...")
+			err := s.SaveUserList()
+			if err != nil {
+				logrus.Errorf("Error saving to disk: %v", err)
+			} else {
+				logrus.Debug("Saved to disk")
+				s.userListChanged = true
+			}
+		}
+		time.Sleep(s.c.DumpInterval)
+	}
+}
+
 func (s *Server) Start() error {
 	if err := s.ResoreUserList(); err != nil {
 		return err
@@ -299,7 +317,8 @@ func (s *Server) Start() error {
 
 	http.Handle("/", http.FileServer(http.Dir("./public")))
 
-	go s.ResumePublishDaemon()
+	go s.ResumePublishLoop()
+	go s.DumpLoop()
 
 	logrus.Infof("Started running on %s", s.c.ListenAddress)
 	return http.ListenAndServe(s.c.ListenAddress, nil)

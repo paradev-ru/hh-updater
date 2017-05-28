@@ -20,7 +20,8 @@ type Config struct {
 	PublicURLRaw           string        `json:"public_url" yaml:"public_url"`
 	RedirectURL            string        `json:"redirect_url" yaml:"redirect_url"`
 	StateString            string        `json:"state_string" yaml:"state_string"`
-	LoopSleep              time.Duration `json:"loop_sleep" yaml:"loop_sleep"`
+	UpdateInterval         time.Duration `json:"update_interval" yaml:"update_interval"`
+	DumpInterval           time.Duration `json:"dump_interval" yaml:"dump_interval"`
 	ListenAddress          string        `json:"listen_address" yaml:"listen_address"`
 	LogLevel               string        `json:"log_level" yaml:"log_level"`
 	DatabasePath           string        `json:"database_path" yaml:"database_path"`
