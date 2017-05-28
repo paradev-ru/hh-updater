@@ -264,7 +264,7 @@ func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) ResumePublishLoop() {
+func (s *Server) UpdateLoop() {
 	for {
 		for id, user := range s.userList {
 			logrus.Debugf("Getting information of user: %s", user.Email)
@@ -317,7 +317,7 @@ func (s *Server) Start() error {
 
 	http.Handle("/", http.FileServer(http.Dir("./public")))
 
-	go s.ResumePublishLoop()
+	go s.UpdateLoop()
 	go s.DumpLoop()
 
 	logrus.Infof("Started running on %s", s.c.ListenAddress)
