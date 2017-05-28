@@ -11,9 +11,12 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/boltdb/bolt"
+	"github.com/gorilla/context"
 	"github.com/leominov/hh"
 	"github.com/paradev-ru/hh-updater/hhclient"
 )
+
+const SafeUserKey = "safeUser"
 
 var (
 	UsersBucket = []byte("usersv1")
@@ -33,6 +36,10 @@ type User struct {
 	Token *oauth2.Token `json:"token"`
 }
 
+type SafeUser struct {
+	ID string `json:"id"`
+}
+
 func NewServer(config *Config) *Server {
 	return &Server{
 		c:        config,
@@ -43,6 +50,18 @@ func NewServer(config *Config) *Server {
 			ClientSecret: config.ClientSecret,
 			RedirectURL:  config.RedirectURL,
 		},
+	}
+}
+
+func (u *User) ToSafeUser() *SafeUser {
+	return &SafeUser{
+		ID: u.ID,
+	}
+}
+
+func (s *SafeUser) ToUser() *User {
+	return &User{
+		ID: s.ID,
 	}
 }
 
@@ -80,7 +99,25 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/error.html", http.StatusFound)
 		return
 	}
-	s.userList[user.ID] = user
+	if _, ok := s.userList[user.ID]; !ok {
+		s.userList[user.ID] = user
+		logrus.Infof("User %s added", user.Email)
+	} else {
+		logrus.Debugf("User %s logged", user.Email)
+	}
+	encodedCookie, err := s.Encrypt(user.ToSafeUser())
+	if err != nil {
+		logrus.Error(err)
+		http.Redirect(w, r, "/error.html", http.StatusFound)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:    s.c.CookieName,
+		Value:   encodedCookie,
+		Path:    "/",
+		Domain:  s.c.CookieHostname,
+		Expires: time.Now().Add(365 * 24 * time.Hour),
+	})
 	http.Redirect(w, r, "/logged.html", http.StatusFound)
 }
 
@@ -184,6 +221,71 @@ func (s *Server) Stop() error {
 	return s.SaveUserList()
 }
 
+func (s *Server) Encrypt(body interface{}) (string, error) {
+	return encryptObj(body, s.c.CookieEncryptionCipher)
+}
+
+func (s *Server) Decrypt(encrypted string, body interface{}) error {
+	return decryptObj(encrypted, s.c.CookieEncryptionCipher, body)
+}
+
+func (s *Server) DeleteHandler(w http.ResponseWriter, r *http.Request) {
+	safeUser := GetSafeUserFromContext(r)
+	if safeUser == nil {
+		http.Error(w, "Empty user data", http.StatusInternalServerError)
+		return
+	}
+	if u, ok := s.userList[safeUser.ID]; ok {
+		delete(s.userList, safeUser.ID)
+		logrus.Infof("User %s deleted", u.Email)
+	}
+}
+
+func (s *Server) MeHandler(w http.ResponseWriter, r *http.Request) {
+	safeUser := GetSafeUserFromContext(r)
+	if safeUser == nil {
+		http.Error(w, "Empty user data", http.StatusInternalServerError)
+		return
+	}
+	encoder := json.NewEncoder(w)
+	if err := encoder.Encode(safeUser); err != nil {
+		http.Error(w, fmt.Sprintf("Cannot encode response data: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+func GetSafeUserFromContext(r *http.Request) *SafeUser {
+	if value := context.Get(r, SafeUserKey); value != nil {
+		return value.(*SafeUser)
+	}
+	return nil
+}
+
+func setSafeUserContext(r *http.Request, user *SafeUser) {
+	context.Set(r, SafeUserKey, user)
+}
+
+func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(s.c.CookieName)
+		if err != nil || len(cookie.Value) == 0 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var safeUser *SafeUser
+		if err := s.Decrypt(cookie.Value, &safeUser); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if _, ok := s.userList[safeUser.ID]; !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		setSafeUserContext(r, safeUser)
+		next.ServeHTTP(w, r)
+	}
+}
+
 func (s *Server) Start() error {
 	if err := s.ResoreUserList(); err != nil {
 		return err
@@ -191,6 +293,9 @@ func (s *Server) Start() error {
 
 	http.HandleFunc("/authorize", s.HandleAuthorize)
 	http.HandleFunc("/callback", s.HandleCallback)
+
+	http.HandleFunc("/delete", s.Auth(http.HandlerFunc(s.DeleteHandler)))
+	http.HandleFunc("/me", s.Auth(http.HandlerFunc(s.MeHandler)))
 
 	http.Handle("/", http.FileServer(http.Dir("./public")))
 
