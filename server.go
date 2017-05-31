@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -16,11 +17,12 @@ import (
 	"github.com/paradev-ru/hh-updater/hhclient"
 )
 
-const SafeUserKey = "safeUser"
+const UserCtxKey = "ctxUser"
 
 var (
-	UsersBucket = []byte("usersv1")
-	UsersKey    = []byte("list")
+	UsersBucket     = []byte("usersv1")
+	UsersKey        = []byte("list")
+	MailLoginRegExp = regexp.MustCompile(`^([^@]*)`)
 )
 
 type Server struct {
@@ -32,9 +34,11 @@ type Server struct {
 }
 
 type User struct {
-	ID    string        `json:"id"`
-	Email string        `json:"email"`
-	Token *oauth2.Token `json:"token"`
+	ID          string        `json:"id"`
+	Email       string        `json:"email"`
+	Token       *oauth2.Token `json:"token"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+	UpdateCount int           `json:"update_count"`
 }
 
 type SafeUser struct {
@@ -59,9 +63,7 @@ func (s *Server) Init() error {
 	if err != nil {
 		return err
 	}
-
 	s.db = db
-
 	return s.db.Update(func(tx *bolt.Tx) error {
 		// Always create Users bucket.
 		if _, err := tx.CreateBucketIfNotExists(UsersBucket); err != nil {
@@ -71,15 +73,17 @@ func (s *Server) Init() error {
 	})
 }
 
-func (u *User) ToSafeUser() *SafeUser {
-	return &SafeUser{
-		ID: u.ID,
-	}
+func (u *User) SafeMail() string {
+	return MailLoginRegExp.ReplaceAllString(u.Email, "***")
 }
 
-func (s *SafeUser) ToUser() *User {
+func (u *User) ToSafeUser() *User {
 	return &User{
-		ID: s.ID,
+		ID:          u.ID,
+		Email:       u.SafeMail(),
+		Token:       nil,
+		UpdatedAt:   u.UpdatedAt,
+		UpdateCount: u.UpdateCount,
 	}
 }
 
@@ -140,21 +144,22 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/logged.html", http.StatusFound)
 }
 
-func (s *Server) publishUserResumes(user *User) error {
+func (s *Server) publishUserResumes(user *User) (bool, error) {
+	var updateCount int
 	client := hhclient.NewClient(user.Token)
 	if _, err := client.Me.GetMe(); err != nil {
-		return fmt.Errorf("Error getting information of user %s: %v", user.Email, err)
+		return false, fmt.Errorf("Error getting information of user %s: %v", user.Email, err)
 	}
 	logrus.Debugf("Getting resumes for user: %s", user.Email)
 	resumeList, err := client.Resume.ResumeMine()
 	if err != nil {
-		return fmt.Errorf("Error getting resume for user %s: %v", user.Email, err)
+		return false, fmt.Errorf("Error getting resume for user %s: %v", user.Email, err)
 	}
 	for _, r := range resumeList {
 		logrus.Debugf("Requesting resume status: '%s'", r.Title)
 		status, err := client.Resume.ResumesStatus(r)
 		if err != nil {
-			return fmt.Errorf("Error getting resume status '%s': %v", r.Title, err)
+			return false, fmt.Errorf("Error getting resume status '%s': %v", r.Title, err)
 		}
 		if !status.CanPublishOrUpdate {
 			logrus.Debugf("Skipping publish resume: '%s'", r.Title)
@@ -162,11 +167,14 @@ func (s *Server) publishUserResumes(user *User) error {
 		}
 		logrus.Debugf("Publishing resume: '%s'", r.Title)
 		if err := client.Resume.ResumesPublish(r); err != nil {
-			return fmt.Errorf("Error publishing resume '%s': %v", r.Title, err)
+			return false, fmt.Errorf("Error publishing resume '%s': %v", r.Title, err)
 		}
 		logrus.Infof("Resume updated: '%s'", r.Title)
 	}
-	return nil
+	if updateCount > 0 {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *Server) ResoreUserList() error {
@@ -208,39 +216,37 @@ func (s *Server) Decrypt(encrypted string, body interface{}) error {
 }
 
 func (s *Server) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-	safeUser := GetSafeUserFromContext(r)
-	if safeUser == nil {
+	user := GetUserFromContext(r)
+	if user == nil {
 		http.Error(w, "Empty user data", http.StatusInternalServerError)
 		return
 	}
-	if u, ok := s.userList[safeUser.ID]; ok {
-		delete(s.userList, safeUser.ID)
-		logrus.Infof("User %s deleted", u.Email)
-	}
+	delete(s.userList, user.ID)
+	logrus.Infof("User %s deleted", user.Email)
 }
 
 func (s *Server) MeHandler(w http.ResponseWriter, r *http.Request) {
-	safeUser := GetSafeUserFromContext(r)
-	if safeUser == nil {
+	user := GetUserFromContext(r)
+	if user == nil {
 		http.Error(w, "Empty user data", http.StatusInternalServerError)
 		return
 	}
 	encoder := json.NewEncoder(w)
-	if err := encoder.Encode(safeUser); err != nil {
+	if err := encoder.Encode(user.ToSafeUser()); err != nil {
 		http.Error(w, fmt.Sprintf("Cannot encode response data: %v", err), http.StatusInternalServerError)
 		return
 	}
 }
 
-func GetSafeUserFromContext(r *http.Request) *SafeUser {
-	if value := context.Get(r, SafeUserKey); value != nil {
-		return value.(*SafeUser)
+func GetUserFromContext(r *http.Request) *User {
+	if value := context.Get(r, UserCtxKey); value != nil {
+		return value.(*User)
 	}
 	return nil
 }
 
-func setSafeUserContext(r *http.Request, user *SafeUser) {
-	context.Set(r, SafeUserKey, user)
+func SetUserToContext(r *http.Request, user *User) {
+	context.Set(r, UserCtxKey, user)
 }
 
 func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
@@ -255,18 +261,19 @@ func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if _, ok := s.userList[safeUser.ID]; !ok {
+		user, ok := s.userList[safeUser.ID]
+		if !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		setSafeUserContext(r, safeUser)
+		SetUserToContext(r, user)
 		next.ServeHTTP(w, r)
 	}
 }
 
 func (s *Server) UpdateLoop() {
 	for {
-		for id, user := range s.userList {
+		for _, user := range s.userList {
 			logrus.Debugf("Getting information of user: %s", user.Email)
 			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
 			newToken, err := tokenSource.Token()
@@ -277,12 +284,17 @@ func (s *Server) UpdateLoop() {
 			if user.Token.AccessToken != newToken.AccessToken {
 				logrus.Infof("Updating token for user %s", user.Email)
 				user.Token = newToken
-				s.userList[id] = user
 				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
 			}
-			if err := s.publishUserResumes(user); err != nil {
-				logrus.Error(err)
+			if isUpdated, err := s.publishUserResumes(user); !isUpdated {
+				if err != nil {
+					logrus.Error(err)
+				}
+				continue
 			}
+			user.UpdateCount++
+			user.UpdatedAt = time.Now().UTC()
+			s.userListChanged = true
 		}
 		time.Sleep(s.c.UpdateInterval)
 	}
