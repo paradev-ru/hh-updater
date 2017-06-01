@@ -304,12 +304,11 @@ func (s *Server) DumpLoop() {
 	for {
 		if s.userListChanged {
 			logrus.Debug("Saving to disk...")
-			err := s.SaveUserList()
-			if err != nil {
+			if err := s.SaveUserList(); err != nil {
 				logrus.Errorf("Error saving to disk: %v", err)
 			} else {
 				logrus.Debug("Saved to disk")
-				s.userListChanged = true
+				s.userListChanged = false
 			}
 		}
 		time.Sleep(s.c.DumpInterval)
