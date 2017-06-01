@@ -144,22 +144,22 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/logged.html", http.StatusFound)
 }
 
-func (s *Server) publishUserResumes(user *User) (bool, error) {
+func (s *Server) publishUserResumes(user *User) (int, error) {
 	var updateCount int
 	client := hhclient.NewClient(user.Token)
 	if _, err := client.Me.GetMe(); err != nil {
-		return false, fmt.Errorf("Error getting information of user %s: %v", user.Email, err)
+		return 0, fmt.Errorf("Error getting information of user %s: %v", user.Email, err)
 	}
 	logrus.Debugf("Getting resumes for user: %s", user.Email)
 	resumeList, err := client.Resume.ResumeMine()
 	if err != nil {
-		return false, fmt.Errorf("Error getting resume for user %s: %v", user.Email, err)
+		return 0, fmt.Errorf("Error getting resume for user %s: %v", user.Email, err)
 	}
 	for _, r := range resumeList {
 		logrus.Debugf("Requesting resume status: '%s'", r.Title)
 		status, err := client.Resume.ResumesStatus(r)
 		if err != nil {
-			return false, fmt.Errorf("Error getting resume status '%s': %v", r.Title, err)
+			return 0, fmt.Errorf("Error getting resume status '%s': %v", r.Title, err)
 		}
 		if !status.CanPublishOrUpdate {
 			logrus.Debugf("Skipping publish resume: '%s'", r.Title)
@@ -167,15 +167,12 @@ func (s *Server) publishUserResumes(user *User) (bool, error) {
 		}
 		logrus.Debugf("Publishing resume: '%s'", r.Title)
 		if err := client.Resume.ResumesPublish(r); err != nil {
-			return false, fmt.Errorf("Error publishing resume '%s': %v", r.Title, err)
+			return 0, fmt.Errorf("Error publishing resume '%s': %v", r.Title, err)
 		}
 		updateCount++
 		logrus.Infof("Resume updated: '%s'", r.Title)
 	}
-	if updateCount > 0 {
-		return true, nil
-	}
-	return false, nil
+	return updateCount, nil
 }
 
 func (s *Server) ResoreUserList() error {
@@ -274,7 +271,7 @@ func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) UpdateLoop() {
 	for {
-		for id, user := range s.userList {
+		for _, user := range s.userList {
 			logrus.Debugf("Getting information of user: %s", user.Email)
 			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
 			newToken, err := tokenSource.Token()
@@ -285,19 +282,18 @@ func (s *Server) UpdateLoop() {
 			if user.Token.AccessToken != newToken.AccessToken {
 				logrus.Infof("Updating token for user %s", user.Email)
 				user.Token = newToken
-				s.userList[id] = user
 				s.userListChanged = true
 				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
 			}
-			if isUpdated, err := s.publishUserResumes(user); !isUpdated {
+			updates, err := s.publishUserResumes(user)
+			if updates == 0 {
 				if err != nil {
 					logrus.Error(err)
 				}
 				continue
 			}
-			user.UpdateCount++
+			user.UpdateCount = user.UpdateCount + updates
 			user.UpdatedAt = time.Now().UTC()
-			s.userList[id] = user
 			s.userListChanged = true
 		}
 		time.Sleep(s.c.UpdateInterval)
