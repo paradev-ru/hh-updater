@@ -169,6 +169,7 @@ func (s *Server) publishUserResumes(user *User) (bool, error) {
 		if err := client.Resume.ResumesPublish(r); err != nil {
 			return false, fmt.Errorf("Error publishing resume '%s': %v", r.Title, err)
 		}
+		updateCount++
 		logrus.Infof("Resume updated: '%s'", r.Title)
 	}
 	if updateCount > 0 {
