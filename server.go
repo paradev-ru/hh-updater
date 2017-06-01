@@ -273,7 +273,7 @@ func (s *Server) Auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) UpdateLoop() {
 	for {
-		for _, user := range s.userList {
+		for id, user := range s.userList {
 			logrus.Debugf("Getting information of user: %s", user.Email)
 			tokenSource := s.oAuthConf.TokenSource(oauth2.NoContext, user.Token)
 			newToken, err := tokenSource.Token()
@@ -284,6 +284,8 @@ func (s *Server) UpdateLoop() {
 			if user.Token.AccessToken != newToken.AccessToken {
 				logrus.Infof("Updating token for user %s", user.Email)
 				user.Token = newToken
+				s.userList[id] = user
+				s.userListChanged = true
 				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
 			}
 			if isUpdated, err := s.publishUserResumes(user); !isUpdated {
@@ -294,6 +296,7 @@ func (s *Server) UpdateLoop() {
 			}
 			user.UpdateCount++
 			user.UpdatedAt = time.Now().UTC()
+			s.userList[id] = user
 			s.userListChanged = true
 		}
 		time.Sleep(s.c.UpdateInterval)
