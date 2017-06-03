@@ -139,7 +139,7 @@ func (s *Server) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		Value:   encodedCookie,
 		Path:    "/",
 		Domain:  s.c.CookieHostname,
-		Expires: time.Now().Add(365 * 24 * time.Hour),
+		Expires: time.Now().Add(12 * time.Month),
 		Secure:  s.c.CookieSecure,
 		// Disallow access from JavaScript
 		HttpOnly: true,
