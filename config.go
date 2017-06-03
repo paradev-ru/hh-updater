@@ -38,7 +38,7 @@ func ConfigFromFile(file string) (*Config, error) {
 		return nil, err
 	}
 	var c *Config
-	if err := yaml.Unmarshal([]byte(configBytes), &c); err != nil {
+	if err := yaml.Unmarshal(configBytes, &c); err != nil {
 		return nil, err
 	}
 	if len(c.LogLevel) != 0 {
