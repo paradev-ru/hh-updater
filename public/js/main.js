@@ -11,8 +11,15 @@ function GetMe() {
 };
 
 function Logout() {
-    document.cookie = 'hupdu=; Max-Age=0';
-    location = '/';
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/logout', true);
+    xhr.onload = function() {
+        if (xhr.status != 200) {
+            return
+        }
+        location = '/';
+    }
+    xhr.send();
 };
 
 function Delete() {

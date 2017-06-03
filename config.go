@@ -28,6 +28,7 @@ type Config struct {
 	PublicURL              *url.URL      `json:"-" yaml:"-"`
 	CookieName             string        `json:"cookie_name" yaml:"cookie_name"`
 	CookieHostname         string        `json:"-" yaml:"-"`
+	CookieSecure           bool          `json:"-" yaml:"-"`
 	CookieEncryptionKey    string        `json:"cookie_encryption_key" yaml:"cookie_encryption_key"`
 	CookieEncryptionCipher cipher.Block  `json:"-" yaml:"-"`
 }
@@ -54,6 +55,9 @@ func ConfigFromFile(file string) (*Config, error) {
 	}
 	c.PublicURL = url
 	c.CookieHostname = domainFromHost(c.PublicURL.Hostname())
+	if c.PublicURL.Scheme == "https" {
+		c.CookieSecure = true
+	}
 	cipherBlock, err := aes.NewCipher([]byte(c.CookieEncryptionKey))
 	if err != nil {
 		return nil, err

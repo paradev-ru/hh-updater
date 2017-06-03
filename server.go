@@ -87,12 +87,12 @@ func (u *User) ToSafeUser() *User {
 	}
 }
 
-func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
+func (s *Server) AuthorizeHandler(w http.ResponseWriter, r *http.Request) {
 	url := s.oAuthConf.AuthCodeURL(s.c.StateString)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
-func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) (*User, error) {
+func (s *Server) userHandler(w http.ResponseWriter, r *http.Request) (*User, error) {
 	q := r.URL.Query()
 	if q.Get("state") != s.c.StateString {
 		return nil, errors.New("Invalid oAuth2 state")
@@ -114,8 +114,8 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) (*User, erro
 	return u, nil
 }
 
-func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
-	user, err := s.handleUser(w, r)
+func (s *Server) CallbackHandler(w http.ResponseWriter, r *http.Request) {
+	user, err := s.userHandler(w, r)
 	if err != nil {
 		logrus.Error(err)
 		http.Redirect(w, r, "/error.html", http.StatusFound)
@@ -140,6 +140,9 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Path:    "/",
 		Domain:  s.c.CookieHostname,
 		Expires: time.Now().Add(365 * 24 * time.Hour),
+		Secure:  s.c.CookieSecure,
+		// Disallow access from JavaScript
+		HttpOnly: true,
 	})
 	http.Redirect(w, r, "/logged.html", http.StatusFound)
 }
@@ -211,6 +214,15 @@ func (s *Server) Encrypt(body interface{}) (string, error) {
 
 func (s *Server) Decrypt(encrypted string, body interface{}) error {
 	return decryptObj(encrypted, s.c.CookieEncryptionCipher, body)
+}
+
+func (s *Server) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:   s.c.CookieName,
+		Domain: s.c.CookieHostname,
+		MaxAge: 0,
+	})
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) DeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -320,9 +332,10 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	http.HandleFunc("/authorize", s.HandleAuthorize)
-	http.HandleFunc("/callback", s.HandleCallback)
+	http.HandleFunc("/authorize", s.AuthorizeHandler)
+	http.HandleFunc("/callback", s.CallbackHandler)
 
+	http.HandleFunc("/logout", s.Auth(http.HandlerFunc(s.LogoutHandler)))
 	http.HandleFunc("/delete", s.Auth(http.HandlerFunc(s.DeleteHandler)))
 	http.HandleFunc("/me", s.Auth(http.HandlerFunc(s.MeHandler)))
 
