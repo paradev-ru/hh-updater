@@ -15,11 +15,8 @@ var (
 	signalChan = make(chan os.Signal, 1)
 )
 
-func init() {
-	flag.Parse()
-}
-
 func main() {
+	flag.Parse()
 	logrus.Info("Starting hh-updater...")
 
 	config, err := ConfigFromFile(*configFile)
