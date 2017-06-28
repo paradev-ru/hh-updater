@@ -20,6 +20,8 @@ import (
 const UserCtxKey = "ctxUser"
 
 var (
+	ErrEmptyResumeList = errors.New("Empty resume list")
+
 	UsersBucket     = []byte("usersv1")
 	UsersKey        = []byte("list")
 	MailLoginRegExp = regexp.MustCompile(`^([^@]*)`)
@@ -139,7 +141,7 @@ func (s *Server) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		Value:   encodedCookie,
 		Path:    "/",
 		Domain:  s.c.CookieHostname,
-		Expires: time.Now().Add(12 * time.Month),
+		Expires: time.Now().AddDate(1, 0, 0),
 		Secure:  s.c.CookieSecure,
 		// Disallow access from JavaScript
 		HttpOnly: true,
@@ -157,6 +159,9 @@ func (s *Server) publishUserResumes(user *User) (int, error) {
 	resumeList, err := client.Resume.ResumeMine()
 	if err != nil {
 		return 0, fmt.Errorf("Error getting resume for user %s: %v", user.Email, err)
+	}
+	if len(resumeList) == 0 {
+		return 0, ErrEmptyResumeList
 	}
 	for _, r := range resumeList {
 		logrus.Debugf("Requesting resume status: '%s'", r.Title)
@@ -298,10 +303,16 @@ func (s *Server) UpdateLoop() {
 				logrus.Infof("New expiry date for user %s token: %s", user.Email, user.Token.Expiry.String())
 			}
 			updates, err := s.publishUserResumes(user)
-			if updates == 0 {
-				if err != nil {
-					logrus.Error(err)
+			if err != nil {
+				if err == ErrEmptyResumeList {
+					logrus.Infof("Deleting user with empty resume list: %s", user.Email)
+					delete(s.userList, user.ID)
+					s.userListChanged = true
 				}
+				continue
+			}
+			if updates == 0 {
+				// Skipping user update if nothing changed
 				continue
 			}
 			user.UpdateCount = user.UpdateCount + updates
